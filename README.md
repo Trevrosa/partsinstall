@@ -7,7 +7,7 @@ Usage: partsinstall.exe [OPTIONS] <NAME> <DESTINATION>
 
 Arguments:
   <NAME>         Name of application to install
-  <DESTINATION>  Destination of install [env: pinst_destination=D:\Games]
+  <DESTINATION>  Destination of install [env: pinst_destination=]
 
 Options:
       --no-shortcut     Do not create start menu shortcuts
