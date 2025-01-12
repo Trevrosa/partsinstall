@@ -74,7 +74,7 @@ pub fn prompt_user_for_path() -> PathBuf {
 
     let path = PathBuf::from(prompt());
 
-    let Ok(path) = path.canonicalize() else {
+    let Ok(path) = dunce::canonicalize(path) else {
         return prompt_user_for_path();
     };
 

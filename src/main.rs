@@ -223,9 +223,10 @@ fn main() {
     let sevenzip_args: &[&str] = if args.no_interaction {
         print!("\n7z using -y");
         flush_stdout();
-        &["e", &destination_arg, "-y", &final_name]
+        // x - extract with full paths (https://documentation.help/7-Zip/extract_full.htm)
+        &["x", &destination_arg, "-y", &final_name]
     } else {
-        &["e", &destination_arg, &final_name]
+        &["x", &destination_arg, &final_name]
     };
 
     let extract_start = Instant::now();
@@ -236,6 +237,7 @@ fn main() {
 
     println!();
 
+    // found here: https://documentation.help/7-Zip/exit_codes.htm
     match sevenzip.code().expect("Could not determine 7z's exit code") {
         // ok (no error or warning)
         0 | 1 => {}
@@ -268,6 +270,7 @@ fn main() {
             }
 
             print!("No installed executables could be found. (s)kip creating shortcut or (g)ive path manually? ");
+            flush_stdout();
 
             if prompt().to_lowercase() == "g" {
                 prompt_user_for_path()
