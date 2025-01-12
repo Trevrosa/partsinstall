@@ -19,7 +19,7 @@ use partsinstall::{
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
-    /// Name of file to install
+    /// Name of application to install
     name: PathBuf,
 
     /// Destination of install
@@ -30,7 +30,7 @@ struct Args {
     #[arg(long)]
     no_shortcut: bool,
 
-    /// No interaction; assume Yes on all prompts
+    /// No interaction; assume answer that continues execution on all prompts
     #[arg(short = 'y', long)]
     no_interaction: bool,
 }

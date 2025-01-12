@@ -3,6 +3,10 @@ name = "partsinstall"
 version = "0.1.0"
 description = "Install apps packaged in compressed parts"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/Trevrosa/partsinstall"
+keywords = ["tool", "windows"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.5.26", features = ["derive", "env"] }
