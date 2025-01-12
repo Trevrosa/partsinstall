@@ -1,6 +1,6 @@
 # partsinstall
 
-Install applications packaged in compressed parts.
+Install applications packaged in compressed parts. (Windows only)
 
 ```
 Usage: partsinstall.exe [OPTIONS] <NAME> <DESTINATION>

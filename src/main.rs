@@ -297,14 +297,14 @@ fn main() {
                         exit(1)
                     }
 
-                    println!("executables:");
+                    println!("\nExecutables found:");
                     for (n, executable) in executables.iter().enumerate() {
                         println!("{}: {executable:?}", n + 1);
                     }
 
                     let choice: usize = prompt_user_for_usize(executables.len());
                     let choice = executables
-                        .get(choice)
+                        .get(choice - 1)
                         .expect("should be less than # of executables");
 
                     choice.clone()

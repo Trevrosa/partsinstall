@@ -50,6 +50,9 @@ pub fn compare_numeric_extension(a: &Path, b: &Path) -> Ordering {
 /// Prompt user for a usize lower than `max`, retrying infinitely.
 #[must_use]
 pub fn prompt_user_for_usize(max: usize) -> usize {
+    print!("Choice: ");
+    flush_stdout();
+
     let result: Result<usize, _> = prompt().parse();
 
     let Ok(result) = result else {
