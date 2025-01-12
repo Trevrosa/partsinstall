@@ -11,6 +11,7 @@ Arguments:
 
 Options:
       --no-shortcut     Do not create start menu shortcuts
+  -F, --no-flatten      Do not flatten installed directories
   -y, --no-interaction  No interaction; assume answer that continues execution on all prompts
   -h, --help            Print help
   -V, --version         Print version
