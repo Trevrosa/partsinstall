@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     env,
-    fs::{self, File},
+    fs::File,
     io::{self, stderr, Write},
     panic::{self, PanicHookInfo},
     path::{Path, PathBuf},
@@ -12,8 +12,8 @@ use std::{
 use clap::Parser;
 use glob::{glob, Paths};
 use partsinstall::{
-    check_name, compare_numeric_extension, flush_stdout, prompt, prompt_user_for_path,
-    prompt_user_for_usize,
+    check_name, compare_numeric_extension, create_destination, flatten_dir, flush_stdout, prompt,
+    prompt_user_for_path, prompt_user_for_usize,
 };
 
 #[derive(Parser, Debug)]
@@ -29,6 +29,10 @@ struct Args {
     /// Do not create start menu shortcuts
     #[arg(long)]
     no_shortcut: bool,
+
+    /// Do not flatten installed directories.
+    #[arg(short = 'F', long)]
+    no_flatten: bool,
 
     /// No interaction; assume answer that continues execution on all prompts
     #[arg(short = 'y', long)]
@@ -88,17 +92,16 @@ fn main() {
         .name
         .file_stem()
         .expect("NAME was not valid.")
-        .to_str()
-        .expect("NAME was not valid unicode.");
+        .to_string_lossy();
 
     let glob_pattern = format!("{name_stem}*");
 
     let files: Paths = if args.name.is_dir() {
         glob(
-            Path::new(name_stem)
+            Path::new(name_stem.as_ref())
                 .join(&glob_pattern)
-                .to_str()
-                .expect("Path was not valid unicode"),
+                .to_string_lossy()
+                .as_ref(),
         )
         .expect("Glob pattern was not valid")
     } else {
@@ -135,8 +138,8 @@ fn main() {
             .iter()
             .find_map(|p| p.file_name())
             .expect("No files were found")
-            .to_str()
-            .expect("One or more files had a non-unicode name")
+            .to_string_lossy();
+        let final_ext = final_ext
             .split('.')
             // skip the file stem
             .skip(1)
@@ -188,36 +191,12 @@ fn main() {
         Cow::Owned(final_name)
     };
 
-    let destination = args.destination.join(name_stem);
+    let destination = args.destination.join(name_stem.as_ref());
     println!("\nExtracting {name_stem} to {destination:?}");
 
-    if let Err(err) = fs::create_dir(&destination) {
-        match err.kind() {
-            io::ErrorKind::AlreadyExists => {
-                let Ok(files) = destination.read_dir() else {
-                    panic!("Destination folder is empty and could not be read.")
-                };
+    create_destination(&destination, args.no_interaction);
 
-                if files.collect::<Vec<_>>().is_empty() {
-                    println!("Destination folder already exists but is empty, continuing.");
-                } else if args.no_interaction {
-                    println!("Destination folder already exists and is not empty, continuing.");
-                } else {
-                    print!("Destination folder already exists and is not empty. Continue anyway? (y/n): ");
-                    flush_stdout();
-
-                    if prompt().to_lowercase() != "y" {
-                        exit(1)
-                    }
-                }
-            }
-            err => panic!("Could not create destination folder: {err}"),
-        }
-    }
-
-    let destination_str = destination
-        .to_str()
-        .expect("Destination was not valid unicode");
+    let destination_str = destination.to_string_lossy();
     let destination_arg = format!("-o{destination_str}");
 
     let sevenzip_args: &[&str] = if args.no_interaction {
@@ -248,18 +227,17 @@ fn main() {
         code => panic!("Unknown 7z exit code {code} encountered"),
     }
 
+    if !args.no_flatten {
+        flatten_dir(name_stem.as_ref(), &destination);
+    }
+
     let extract_time = extract_start.elapsed();
 
     if !args.no_shortcut {
         println!("Creating start menu shortcut");
 
-        let executables = glob(
-            destination
-                .join("*exe")
-                .to_str()
-                .expect("Destination path did not contain valid executable"),
-        )
-        .expect("Invalid glob pattern used");
+        let executables =
+            glob(&destination.join("*exe").to_string_lossy()).expect("Invalid glob pattern used");
         let executables: Vec<PathBuf> = executables.map(|p| p.unwrap()).collect();
 
         let executable: PathBuf = if executables.is_empty() {
@@ -273,9 +251,9 @@ fn main() {
             flush_stdout();
 
             if prompt().to_lowercase() == "g" {
-                prompt_user_for_path()
+                prompt_user_for_path(&destination)
             } else {
-                exit(1);
+                success(combine_time, extract_time, start);
             }
         } else if let Some(found_executable) = executables
             .iter()
