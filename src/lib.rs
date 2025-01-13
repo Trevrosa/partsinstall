@@ -118,15 +118,12 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
 }
 
 /// Check if a path contains any keywords from `keywords`
-///
-/// # Panics
-///
-/// Will panic if `path` does not have a file name or is not valid unicode.
 pub fn check_name<'a>(keywords: impl IntoIterator<Item = &'a str>, path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .expect("Executable should have a name")
-        .to_string_lossy();
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+
+    let name = name.to_string_lossy();
 
     keywords.into_iter().any(|kw| name.contains(kw))
 }
