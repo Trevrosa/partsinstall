@@ -312,21 +312,27 @@ fn main() {
         let appdata =
             std::env::var("APPDATA").expect("Could not find environment variable APPDATA");
         let start_menu = PathBuf::from(appdata).join(r"Microsoft\Windows\Start Menu\Programs");
+
         let shortcut = start_menu.join(format!("{name_stem}.lnk"));
+        let Ok(shortcut_dir) = dunce::canonicalize(destination) else {
+            success(combine_time, extract_time, flatten_time, start);
+        };
 
         // create a shortcut in powershell
         let script = format!(
             // do not need quotes around placeholder since PathBuf's Debug impl adds quotes
-            r"$shortcut = (New-Object -COMObject WScript.Shell).CreateShortcut({:?}); $shortcut.TargetPath = {:?}; $shortcut.Save()",
-            &shortcut, &executable
+            r"$shortcut = (New-Object -COMObject WScript.Shell).CreateShortcut({shortcut:?});
+            $shortcut.TargetPath = {executable:?};
+            $shortcut.WorkingDirectory = {shortcut_dir:?};
+            $shortcut.Save()",
         );
 
-        let pwsh = Command::new("powershell")
+        let powershell = Command::new("powershell")
             .args(["-c", &script])
             .status()
             .expect("Failed to run powershell.");
 
-        match pwsh.code() {
+        match powershell.code() {
             Some(0) => println!("Successfully created shortcut to {executable:?}."),
             Some(1) => {
                 println!("Powershell encountered an uncaught error while creating the shortcut.");
