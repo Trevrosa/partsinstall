@@ -12,7 +12,7 @@ use std::{
 use clap::Parser;
 use glob::{glob, Paths};
 use partsinstall::{
-    check_name, compare_numeric_extension, create_destination, flatten_dir, flush_stdout, prompt,
+    check_name, compare_numeric_extension, create_destination, flatten_dir, print_flush, prompt,
     prompt_user_for_path, prompt_user_for_usize,
 };
 
@@ -27,14 +27,14 @@ struct Args {
     destination: PathBuf,
 
     /// Do not create start menu shortcuts
-    #[arg(long)]
+    #[arg(short = 'S', long)]
     no_shortcut: bool,
 
     /// Do not flatten installed directories.
     #[arg(short = 'F', long)]
     no_flatten: bool,
 
-    /// No interaction; assume answer that continues execution on all prompts
+    /// Assume answer that continues execution without interaction on all prompts
     #[arg(short = 'y', long)]
     no_interaction: bool,
 }
@@ -119,17 +119,16 @@ fn main() {
 
     let final_name = if files.len() == 1 {
         if args.no_interaction {
-            args.name.to_string_lossy()
+            files[0].to_string_lossy()
         } else {
-            print!("Only 1 file found, extract {:?}? (y/n): ", args.name);
-            flush_stdout();
+            print_flush!("Only 1 file found, extract {:?}? (y/n): ", files[0]);
 
             // true
             if prompt().to_lowercase() != "y" {
                 exit(1)
             }
 
-            args.name.to_string_lossy()
+            files[0].to_string_lossy()
         }
     } else {
         let combine_start = Instant::now();
@@ -137,7 +136,7 @@ fn main() {
         let final_ext = files
             .iter()
             .find_map(|p| p.file_name())
-            .expect("No files were found")
+            .expect("No file names could be found")
             .to_string_lossy();
         let final_ext = final_ext
             .split('.')
@@ -146,7 +145,7 @@ fn main() {
             // find extension which is not a number
             // eg. from file.7z.001, we want 7z, ignoring 001.
             .find(|part| !part.chars().all(char::is_numeric))
-            .expect("Could not determine file extension");
+            .expect("Could not determine output file extension");
 
         let final_name = format!("{name_stem}.{final_ext}");
         println!("Combining to {final_name}");
@@ -176,8 +175,7 @@ fn main() {
                     if args.no_interaction {
                         println!("File \"{final_name}\" already exists, extracting.");
                     } else {
-                        print!("File \"{final_name}\" already exists, extract it? (y/n): ");
-                        flush_stdout();
+                        print_flush!("File \"{final_name}\" already exists, extract it? (y/n): ");
 
                         if prompt().to_lowercase() != "y" {
                             exit(1);
@@ -200,8 +198,7 @@ fn main() {
     let destination_arg = format!("-o{destination_str}");
 
     let sevenzip_args: &[&str] = if args.no_interaction {
-        print!("\n7z using -y");
-        flush_stdout();
+        print_flush!("\n7z using -y");
         // x - extract with full paths (https://documentation.help/7-Zip/extract_full.htm)
         &["x", &destination_arg, "-y", &final_name]
     } else {
@@ -227,14 +224,18 @@ fn main() {
         code => panic!("Unknown 7z exit code {code} encountered"),
     }
 
-    if !args.no_flatten {
-        flatten_dir(name_stem.as_ref(), &destination);
+    if args.no_flatten {
+        println!("Not flattening install directory.");
+    } else {
+        flatten_dir(&name_stem, &destination);
     }
 
     let extract_time = extract_start.elapsed();
 
-    if !args.no_shortcut {
-        println!("Creating start menu shortcut");
+    if args.no_shortcut {
+        println!("Not creating start menu shortcut.");
+    } else {
+        println!("Creating start menu shortcut:");
 
         let executables =
             glob(&destination.join("*exe").to_string_lossy()).expect("Invalid glob pattern used");
@@ -247,8 +248,7 @@ fn main() {
                 success(combine_time, extract_time, start);
             }
 
-            print!("No installed executables could be found. (s)kip creating shortcut or (g)ive path manually? ");
-            flush_stdout();
+            print_flush!("No installed executables could be found. (s)kip creating shortcut or (g)ive path manually? ");
 
             if prompt().to_lowercase() == "g" {
                 prompt_user_for_path(&destination)
@@ -259,23 +259,23 @@ fn main() {
             .iter()
             .find(|p| check_name(name_stem.split(' '), p))
         {
+            // assume yes
             if args.no_interaction {
                 println!("Found executable {:?}", &found_executable);
-                found_executable.clone()
+                dunce::canonicalize(found_executable.clone())
+                    .expect("Executable path should exist.")
             } else {
-                print!(
+                print_flush!(
                     "Found executable {:?}, is it correct? (y/n): ",
                     &found_executable
                 );
-                flush_stdout();
 
-                // assume yes
                 if prompt().to_lowercase() == "y" {
                     found_executable.clone()
                 } else {
                     if executables.len() == 1 {
-                        println!("Found only 1 executable, exiting.");
-                        exit(1)
+                        println!("Found only 1 executable, cannot create shortcut.");
+                        success(combine_time, extract_time, start);
                     }
 
                     println!("\nExecutables found:");
@@ -288,12 +288,13 @@ fn main() {
                         .get(choice - 1)
                         .expect("should be less than # of executables");
 
-                    choice.clone()
+                    dunce::canonicalize(choice.clone())
+                        .expect("Chosen executable path should exist.")
                 }
             }
         } else {
             println!("Found only 1 executable: {:?}", executables[0]);
-            executables[0].clone()
+            dunce::canonicalize(executables[0].clone()).expect("Executable path should exist.")
         };
 
         let appdata =
@@ -303,7 +304,7 @@ fn main() {
 
         // create a shortcut in powershell
         let script = format!(
-            // do not need quotes around placeholder since PathBuf's Debug adds quotes
+            // do not need quotes around placeholder since PathBuf's Debug impl adds quotes
             r"$shortcut = (New-Object -COMObject WScript.Shell).CreateShortcut({:?}); $shortcut.TargetPath = {:?}; $shortcut.Save()",
             &shortcut, &executable
         );
@@ -314,7 +315,7 @@ fn main() {
             .expect("Failed to run powershell.");
 
         match pwsh.code() {
-            Some(0) => println!("Successfully created shortcut."),
+            Some(0) => println!("Successfully created shortcut to {executable:?}."),
             Some(1) => {
                 println!("Powershell encountered an uncaught error while creating the shortcut.");
             }

@@ -10,9 +10,9 @@ Arguments:
   <DESTINATION>  Destination of install [env: pinst_destination=]
 
 Options:
-      --no-shortcut     Do not create start menu shortcuts
+  -S, --no-shortcut     Do not create start menu shortcuts
   -F, --no-flatten      Do not flatten installed directories
-  -y, --no-interaction  No interaction; assume answer that continues execution on all prompts
+  -y, --no-interaction  Assume answer that continues execution without interaction on all prompts
   -h, --help            Print help
   -V, --version         Print version
 ```
