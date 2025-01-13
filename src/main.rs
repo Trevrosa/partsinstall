@@ -1,5 +1,13 @@
 use std::{
-    borrow::Cow, env, fs::{self, File}, io::{self, stderr, Write}, os::windows::fs::MetadataExt, panic::{self, PanicHookInfo}, path::{Path, PathBuf}, process::{exit, Command}, time::{Duration, Instant}
+    borrow::Cow,
+    env,
+    fs::{self, File},
+    io::{self, stderr, Write},
+    os::windows::fs::MetadataExt,
+    panic::{self, PanicHookInfo},
+    path::{Path, PathBuf},
+    process::{exit, Command},
+    time::{Duration, Instant},
 };
 
 use clap::Parser;
@@ -159,7 +167,7 @@ fn main() {
                 }
 
                 for (n, file) in files.iter().enumerate() {
-                    if let Ok(metadata) = fs::metadata(&file) { 
+                    if let Ok(metadata) = fs::metadata(file) {
                         let size = format_size(metadata.file_size(), DECIMAL);
                         println!("{}/{files_len}: combining {file:?} ({size})", n + 1);
                     } else {
