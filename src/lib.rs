@@ -63,66 +63,59 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
     };
 
     let name = name.as_ref();
+    let keywords: Vec<&str> = name.split(' ').collect();
 
-    for entry in dir_entries {
-        let Ok(entry) = entry else {
-            println!("Skipping {entry:?} for flattening, could not be read.");
+    let inner_dir = dir_entries.filter_map(Result::ok).find(|d| {
+        let Ok(meta) = d.metadata() else {
+            return false;
+        };
+
+        meta.is_dir() && check_name(keywords.clone(), &d.path())
+    });
+
+    let Some(inner_dir) = inner_dir else {
+        println!("No inner directory to flatten.");
+        return;
+    };
+
+    let Ok(inner_entries) = inner_dir.path().read_dir() else {
+        println!("Could not read inner directory {:?}", inner_dir.path());
+        return;
+    };
+
+    let mut flattened = 0;
+
+    for inner_entry in inner_entries {
+        let Ok(inner_entry) = inner_entry else {
+            println!("Skipped flattening unknown inner file/folder.");
             continue;
         };
-        let Ok(entry_metadata) = entry.metadata() else {
+
+        let inner_entry_path = inner_entry.path();
+        let moved_path = dir.join(inner_entry.file_name());
+
+        if let Err(err) = fs::rename(&inner_entry_path, &moved_path) {
             println!(
-                "Skipping {:?} for flattening, could not read file metadata.",
-                entry.path()
+                "Got error {} while trying to move {:?} to {:?}",
+                err.kind(),
+                inner_entry_path,
+                moved_path
             );
-            continue;
-        };
-
-        // we only want directories that matches `name`'s keywords
-        if !entry_metadata.is_dir() || !name.split(' ').any(|kw| name.contains(kw)) {
-            continue;
         }
 
-        let Ok(inner_entries) = entry.path().read_dir() else {
-            println!("Inner directory {entry:?} was not readable, not flattening.");
-            continue;
-        };
-
-        let mut moved_entries = 0;
-        for inner_entry in inner_entries {
-            let Ok(inner_entry) = inner_entry else {
-                println!("Skipping {inner_entry:?} for flattening, could not be read.");
-                continue;
-            };
-
-            let inner_entry_path = inner_entry.path();
-            let Some(inner_entry_name) = inner_entry_path.file_name() else {
-                println!(
-                    "Skipping {inner_entry_path:?} for flatenning, could not determine file name."
-                );
-                continue;
-            };
-
-            let moved_name = dir.join(inner_entry_name);
-
-            if let Err(err) = fs::rename(&inner_entry_path, moved_name) {
-                println!(
-                    "Got error {:?} while moving {inner_entry_path:?}",
-                    err.kind()
-                );
-                continue;
-            }
-
-            moved_entries += 1;
-        }
-
-        if let Err(err) = fs::remove_dir(entry.path()) {
-            println!("Got error {} trying to remove inner folder.", err.kind());
-        }
-
-        println!("Successfully flattened {moved_entries} files/folders to {dir:?}",);
+        flattened += 1;
+        print_flush!("Flattened {flattened} file(s)\r");
     }
 
-    println!();
+    if let Err(err) = fs::remove_dir(inner_dir.path()) {
+        println!(
+            "Got error {:?} while removing inner folder {:?}",
+            err.kind(),
+            inner_dir.path()
+        );
+    } else {
+        println!("Sucessfully flattened {flattened} file(s).\n");
+    }
 }
 
 /// Check if a path contains any keywords from `keywords`

@@ -1,16 +1,10 @@
 use std::{
-    borrow::Cow,
-    env,
-    fs::File,
-    io::{self, stderr, Write},
-    panic::{self, PanicHookInfo},
-    path::{Path, PathBuf},
-    process::{exit, Command},
-    time::{Duration, Instant},
+    borrow::Cow, env, fs::{self, File}, io::{self, stderr, Write}, os::windows::fs::MetadataExt, panic::{self, PanicHookInfo}, path::{Path, PathBuf}, process::{exit, Command}, time::{Duration, Instant}
 };
 
 use clap::Parser;
 use glob::{glob, Paths};
+use humansize::{format_size, DECIMAL};
 use partsinstall::{
     check_name, compare_numeric_extension, create_destination, flatten_dir, print_flush, prompt,
     prompt_user_for_path, prompt_user_for_usize,
@@ -58,11 +52,14 @@ fn panic_hook(panic_info: &PanicHookInfo) {
 }
 
 /// Print summary and exit with exit code 0
-fn success(combine_time: Duration, extract_time: Duration, start: Instant) -> ! {
+fn success(
+    combine_time: Duration,
+    extract_time: Duration,
+    flatten_time: Duration,
+    start: Instant,
+) -> ! {
     println!(
-        "\nDone! (combining took {:?}, extracting took {:?}, total: {:?})",
-        combine_time,
-        extract_time,
+        "\nDone! (combining took {combine_time:?}, extracting took {extract_time:?}, flattening took {flatten_time:?}, total: {:?})",
         start.elapsed()
     );
 
@@ -108,7 +105,7 @@ fn main() {
         glob(&glob_pattern).expect("Glob pattern was not valid")
     };
 
-    let mut files: Vec<PathBuf> = files.map(|p| p.unwrap()).collect();
+    let mut files: Vec<PathBuf> = files.filter_map(Result::ok).collect();
 
     if files.is_empty() {
         println!("No files were found starting with the name {name_stem}");
@@ -162,7 +159,12 @@ fn main() {
                 }
 
                 for (n, file) in files.iter().enumerate() {
-                    println!("{}/{files_len}: combining {file:?}", n + 1);
+                    if let Ok(metadata) = fs::metadata(&file) { 
+                        let size = format_size(metadata.file_size(), DECIMAL);
+                        println!("{}/{files_len}: combining {file:?} ({size})", n + 1);
+                    } else {
+                        println!("{}/{files_len}: combining {file:?}", n + 1);
+                    }
                     let mut file = File::open(file).expect("File could not be opened");
                     io::copy(&mut file, &mut final_file).expect("Failed to copy files");
                 }
@@ -224,13 +226,15 @@ fn main() {
         code => panic!("Unknown 7z exit code {code} encountered"),
     }
 
+    let extract_time = extract_start.elapsed();
+
+    let flatten_start = Instant::now();
     if args.no_flatten {
         println!("Not flattening install directory.");
     } else {
         flatten_dir(&name_stem, &destination);
     }
-
-    let extract_time = extract_start.elapsed();
+    let flatten_time = flatten_start.elapsed();
 
     if args.no_shortcut {
         println!("Not creating start menu shortcut.");
@@ -239,13 +243,13 @@ fn main() {
 
         let executables =
             glob(&destination.join("*exe").to_string_lossy()).expect("Invalid glob pattern used");
-        let executables: Vec<PathBuf> = executables.map(|p| p.unwrap()).collect();
+        let executables: Vec<PathBuf> = executables.filter_map(Result::ok).collect();
 
         let executable: PathBuf = if executables.is_empty() {
             // skip to end
             if args.no_interaction {
                 println!("Could not find any installed executables.");
-                success(combine_time, extract_time, start);
+                success(combine_time, extract_time, flatten_time, start);
             }
 
             print_flush!("No installed executables could be found. (s)kip creating shortcut or (g)ive path manually? ");
@@ -253,7 +257,7 @@ fn main() {
             if prompt().to_lowercase() == "g" {
                 prompt_user_for_path(&destination)
             } else {
-                success(combine_time, extract_time, start);
+                success(combine_time, extract_time, flatten_time, start);
             }
         } else if let Some(found_executable) = executables
             .iter()
@@ -275,7 +279,7 @@ fn main() {
                 } else {
                     if executables.len() == 1 {
                         println!("Found only 1 executable, cannot create shortcut.");
-                        success(combine_time, extract_time, start);
+                        success(combine_time, extract_time, flatten_time, start);
                     }
 
                     println!("\nExecutables found:");
@@ -323,5 +327,5 @@ fn main() {
         }
     }
 
-    success(combine_time, extract_time, start);
+    success(combine_time, extract_time, flatten_time, start);
 }
