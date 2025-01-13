@@ -63,14 +63,13 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
     };
 
     let name = name.as_ref();
-    let keywords: Vec<&str> = name.split(' ').collect();
 
     let inner_dir = dir_entries.filter_map(Result::ok).find(|d| {
         let Ok(meta) = d.metadata() else {
             return false;
         };
 
-        meta.is_dir() && check_name(keywords.clone(), &d.path())
+        meta.is_dir() && check_name(name.split(' '), &d.path())
     });
 
     let Some(inner_dir) = inner_dir else {
