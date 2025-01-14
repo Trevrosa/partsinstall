@@ -56,6 +56,10 @@ pub fn create_destination(destination: &Path, no_interaction: bool) {
 
 /// Move all contents of a directory called `name` in `dir` to `dir`.
 /// eg. `App/App/files -> App/files`
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "The expect_err() used will never panic since it is in a let Ok() else block."
+)]
 pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
     let Ok(dir_entries) = dir.read_dir() else {
         println!("Directory was not readable, not flattening.");
@@ -86,7 +90,10 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
 
     for inner_entry in inner_entries {
         let Ok(inner_entry) = inner_entry else {
-            println!("Skipped flattening unknown inner file/folder.");
+            println!(
+                "Skipped flattening inner file/folder, got error {}.",
+                inner_entry.expect_err(".err() must work, fatal error.")
+            );
             continue;
         };
 
@@ -95,11 +102,12 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
 
         if let Err(err) = fs::rename(&inner_entry_path, &moved_path) {
             println!(
-                "Got error {} while trying to move {:?} to {:?}",
+                "Got error {} while trying to move {:?} to {:?}\n",
                 err.kind(),
                 inner_entry_path,
                 moved_path
             );
+            continue;
         }
 
         flattened += 1;
