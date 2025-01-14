@@ -1,11 +1,11 @@
 [package]
 name = "partsinstall"
-version = "0.1.9"
+version = "0.1.10"
 description = "Install apps packaged in compressed parts"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Trevrosa/partsinstall"
-keywords = ["tool", "windows"]
+keywords = ["tool", "decompression"]
 categories = ["command-line-utilities"]
 
 [dependencies]

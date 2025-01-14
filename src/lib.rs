@@ -1,4 +1,8 @@
+#[cfg(test)]
+mod tests;
+
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     fs,
     io::{self, stdin},
@@ -20,6 +24,91 @@ macro_rules! print_flush {
     }
 }
 
+/// List of archive extensions supported by the tool and 7z.
+///
+/// I chose these values based on the most commonly used archive types on Windows specifically.
+///
+/// <https://documentation.help/7-Zip/formats.htm>
+const ARCHIVE_EXTS: &[&str] = &["7z", "zip", "rar", "tgz"];
+
+/// Provide convenience extension methods for [`Path`]
+trait PathExt {
+    fn is_archive(&self) -> bool;
+    fn is_numeric(&self) -> bool;
+    fn lossy_file_name(&self) -> Option<Cow<'_, str>>;
+    fn lossy_file_stem(&self) -> Option<Cow<'_, str>>;
+}
+
+impl PathExt for Path {
+    /// Returns true if the path's extension is in [`ARCHIVE_EXTS`]
+    fn is_archive(&self) -> bool {
+        let ext = self.extension();
+        ext.map(|ext| ext.to_string_lossy())
+            .is_some_and(|ext| ARCHIVE_EXTS.contains(&ext.as_ref()))
+    }
+
+    /// Returns true if the path's extension can be parsed as a `u32`.
+    fn is_numeric(&self) -> bool {
+        let ext = self.extension();
+        ext.is_some_and(|ext| ext.to_string_lossy().parse::<u32>().is_ok())
+    }
+
+    /// Convenience function to get a `Path`'s lossy file name.
+    fn lossy_file_name(&self) -> Option<Cow<'_, str>> {
+        self.file_name().map(|name| name.to_string_lossy())
+    }
+
+    /// Convenience function to get a `Path`'s lossy file stem.
+    fn lossy_file_stem(&self) -> Option<Cow<'_, str>> {
+        self.file_stem().map(|name| name.to_string_lossy())
+    }
+}
+
+/// Find the app name
+#[must_use]
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "O.expect() only used within a block which O is checked to be Some."
+)]
+pub fn find_app_name(name: &Path) -> Option<Cow<'_, str>> {
+    let name_str = name.lossy_file_name()?;
+
+    // if `name` does not exist, it already probably is the app name,
+    // so we can return it as the app name.
+    if !name.exists() {
+        return Some(name_str);
+    }
+
+    // if `name` exists and is a dir, it means any dots in the passed `name` are in the actual app name.
+    // eg. in the app Test.App, .App is part of the name and is not a file extension.
+    if name.is_dir() {
+        return Some(name_str);
+    }
+
+    // we now know `name` exists and is not a dir.
+
+    // remove numeric extension. eg. app.7z.001 would become app.7z
+    let name = if name.is_numeric() {
+        name.lossy_file_stem()?
+    } else {
+        name.lossy_file_name()?
+    };
+
+    let file_name = Path::new(name.as_ref());
+
+    // remove archive extension. eg. app.7z would become app.
+    let file_name = if file_name.is_archive() {
+        file_name.lossy_file_stem()?
+    } else {
+        // here, file_name should already be a file name
+        // since we only return file_stem or file_name above.
+        // so we only need to use .to_string_lossy()
+        file_name.to_string_lossy()
+    };
+
+    Some(Cow::Owned(file_name.into_owned()))
+}
+
 /// Create destination path, handling errors and giving prompts as needed.
 ///
 /// # Panics
@@ -36,10 +125,10 @@ pub fn create_destination(destination: &Path, no_interaction: bool) {
                 panic!("Destination folder already exists and could not be read.")
             };
 
-            if files.collect::<Vec<_>>().is_empty() {
-                println!("Destination folder already exists but is empty, continuing.");
-            } else if no_interaction {
+            if no_interaction {
                 println!("Destination folder already exists and is not empty, continuing because of -y flag.");
+            } else if files.collect::<Vec<_>>().is_empty() {
+                println!("Destination folder already exists but is empty, continuing.");
             } else {
                 print_flush!(
                     "Destination folder already exists and is not empty. Continue anyway? (y/n): "
@@ -68,13 +157,9 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
 
     let name = name.as_ref();
 
-    let inner_dir = dir_entries.filter_map(Result::ok).find(|d| {
-        let Ok(meta) = d.metadata() else {
-            return false;
-        };
-
-        meta.is_dir() && check_name(name.split(' '), &d.path())
-    });
+    let inner_dir = dir_entries
+        .filter_map(Result::ok)
+        .find(|d| d.path().is_dir() && check_name(name.split(' '), &d.path()));
 
     let Some(inner_dir) = inner_dir else {
         println!("No inner directory to flatten.");
@@ -92,7 +177,8 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
         let Ok(inner_entry) = inner_entry else {
             println!(
                 "Skipped flattening inner file/folder, got error {}.",
-                inner_entry.expect_err(".err() must work, fatal error.")
+                inner_entry
+                    .expect_err(".err() must work in a let Ok() else block, how did we get here?")
             );
             continue;
         };

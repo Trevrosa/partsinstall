@@ -14,14 +14,14 @@ use clap::Parser;
 use glob::{glob, Paths};
 use humansize::{format_size, DECIMAL};
 use partsinstall::{
-    check_name, compare_numeric_extension, create_destination, flatten_dir, print_flush, prompt,
-    prompt_user_for_path, prompt_user_for_usize,
+    check_name, compare_numeric_extension, create_destination, find_app_name, flatten_dir,
+    print_flush, prompt, prompt_user_for_path, prompt_user_for_usize,
 };
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
-    /// Name of application to install
+    /// Name of or path to application to install
     name: PathBuf,
 
     /// Destination of install
@@ -87,26 +87,20 @@ fn main() {
         "Destination {:?} does not exist.",
         args.destination
     );
-    assert_eq!(
-        env::consts::OS,
-        "windows",
-        "partsinstall is meant for Windows."
-    );
 
-    let name_stem = args
-        .name
-        .file_stem()
-        .expect("NAME was not valid.")
-        .to_string_lossy();
+    let Some(app_name) = find_app_name(&args.name) else {
+        println!("Could not parse app name");
+        exit(1);
+    };
+    println!("parsed name as: {app_name}");
 
-    let glob_pattern = format!("{name_stem}*");
+    let glob_pattern = format!("{app_name}*");
 
     let files: Paths = if args.name.is_dir() {
         glob(
-            Path::new(name_stem.as_ref())
+            &Path::new(app_name.as_ref())
                 .join(&glob_pattern)
-                .to_string_lossy()
-                .as_ref(),
+                .to_string_lossy(),
         )
         .expect("Glob pattern was not valid")
     } else {
@@ -116,7 +110,7 @@ fn main() {
     let mut files: Vec<PathBuf> = files.filter_map(Result::ok).collect();
 
     if files.is_empty() {
-        println!("No files were found starting with the name {name_stem}");
+        println!("No files were found starting with the name {app_name}");
         exit(1);
     }
 
@@ -149,10 +143,10 @@ fn main() {
             .skip(1)
             // find extension which is not a number
             // eg. from file.7z.001, we want 7z, ignoring 001.
-            .find(|part| !part.chars().all(char::is_numeric))
+            .find(|part| part.parse::<u32>().is_err())
             .expect("Could not determine output file extension");
 
-        let final_name = format!("{name_stem}.{final_ext}");
+        let final_name = format!("{app_name}.{final_ext}");
         println!("Combining to {final_name}");
         let final_file = File::create_new(&final_name);
 
@@ -199,8 +193,8 @@ fn main() {
         Cow::Owned(final_name)
     };
 
-    let destination = args.destination.join(name_stem.as_ref());
-    println!("\nExtracting {name_stem} to {destination:?}");
+    let destination = args.destination.join(app_name.as_ref());
+    println!("\nExtracting {app_name} to {destination:?}");
 
     create_destination(&destination, args.no_interaction);
 
@@ -240,13 +234,13 @@ fn main() {
     if args.no_flatten {
         println!("Not flattening install directory.");
     } else {
-        flatten_dir(&name_stem, &destination);
+        flatten_dir(&app_name, &destination);
     }
     let flatten_time = flatten_start.elapsed();
 
     if args.no_shortcut {
         println!("Not creating start menu shortcut.");
-    } else {
+    } else if env::consts::OS == "windows" {
         println!("Creating start menu shortcut:");
 
         let executables =
@@ -269,7 +263,7 @@ fn main() {
             }
         } else if let Some(found_executable) = executables
             .iter()
-            .find(|p| check_name(name_stem.split(' '), p))
+            .find(|p| check_name(app_name.split(' '), p))
         {
             // assume yes
             if args.no_interaction {
@@ -313,7 +307,7 @@ fn main() {
             std::env::var("APPDATA").expect("Could not find environment variable APPDATA");
         let start_menu = PathBuf::from(appdata).join(r"Microsoft\Windows\Start Menu\Programs");
 
-        let shortcut = start_menu.join(format!("{name_stem}.lnk"));
+        let shortcut = start_menu.join(format!("{app_name}.lnk"));
         let Ok(shortcut_dir) = dunce::canonicalize(destination) else {
             success(combine_time, extract_time, flatten_time, start);
         };
@@ -339,6 +333,8 @@ fn main() {
             }
             code => println!("Powershell exit code: {code:?}"),
         }
+    } else {
+        println!("Not creating start menu shortcuts, not on Windows.");
     }
 
     success(combine_time, extract_time, flatten_time, start);

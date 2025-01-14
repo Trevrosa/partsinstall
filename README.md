@@ -1,12 +1,25 @@
 # partsinstall
 
-Install applications packaged in compressed parts. (Windows only)
+Install applications packaged in compressed parts.
 
-```
+Can create start menu shortcuts if on Windows.
+
+Supported archive types:
+
+- 7z
+- zip
+- rar
+- tgz
+
+\<DESTINATION\> argument can be set from environment variable: `pinst_destination`
+
+## Usage
+
+```sh
 Usage: partsinstall.exe [OPTIONS] <NAME> <DESTINATION>
 
 Arguments:
-  <NAME>         Name of application to install
+  <NAME>         Name of or path to application to install
   <DESTINATION>  Destination of install [env: pinst_destination=]
 
 Options:
