@@ -56,6 +56,7 @@ pub fn parse_app_name(name: &Path) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(file_name.into_owned()))
 }
 
+/// Find the final output name, combining `files` if needed, returning the final name and time taken to combine (if any). 
 pub fn find_final_name<'a>(
     app_name: &str,
     files: &'a mut [PathBuf],

@@ -175,6 +175,7 @@ fn main() {
         println!("Not creating start menu shortcut.");
     } else if env::consts::OS == "windows" {
         println!("Creating start menu shortcut:");
+        
         create_shortcut(&app_name, &destination, args.no_interaction);
         success(combine_time, extract_time, flatten_time, start);
     } else {
