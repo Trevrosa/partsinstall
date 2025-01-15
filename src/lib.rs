@@ -35,6 +35,7 @@ const ARCHIVE_EXTS: &[&str] = &["7z", "zip", "rar", "tgz"];
 trait PathExt {
     fn is_archive(&self) -> bool;
     fn is_numeric(&self) -> bool;
+    fn lossy_extension(&self) -> Option<Cow<'_, str>>;
     fn lossy_file_name(&self) -> Option<Cow<'_, str>>;
     fn lossy_file_stem(&self) -> Option<Cow<'_, str>>;
 }
@@ -42,15 +43,19 @@ trait PathExt {
 impl PathExt for Path {
     /// Returns true if the path's extension is in [`ARCHIVE_EXTS`]
     fn is_archive(&self) -> bool {
-        let ext = self.extension();
-        ext.map(|ext| ext.to_string_lossy())
+        self.lossy_extension()
             .is_some_and(|ext| ARCHIVE_EXTS.contains(&ext.as_ref()))
     }
 
     /// Returns true if the path's extension can be parsed as a `u32`.
     fn is_numeric(&self) -> bool {
-        let ext = self.extension();
-        ext.is_some_and(|ext| ext.to_string_lossy().parse::<u32>().is_ok())
+        self.lossy_extension()
+            .is_some_and(|ext| ext.parse::<u32>().is_ok())
+    }
+
+    // Conveneince function to get a `Path`'s lossy extension.
+    fn lossy_extension(&self) -> Option<Cow<'_, str>> {
+        self.extension().map(|ext| ext.to_string_lossy())
     }
 
     /// Convenience function to get a `Path`'s lossy file name.
