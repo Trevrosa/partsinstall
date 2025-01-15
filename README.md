@@ -23,9 +23,10 @@ Arguments:
   <DESTINATION>  Destination of install [env: pinst_destination=]
 
 Options:
-  -S, --no-shortcut     Do not create start menu shortcuts
-  -F, --no-flatten      Do not flatten installed directories
-  -y, --no-interaction  Assume answer that continues execution without interaction on all prompts
-  -h, --help            Print help
-  -V, --version         Print version
+  -w, --working-dir <WORKING_DIR>  Working directory the tool will use
+  -S, --no-shortcut                Do not create start menu shortcuts
+  -F, --no-flatten                 Do not flatten installed directories
+  -y, --no-interaction             Assume answer that continues execution without interaction on all prompts
+  -h, --help                       Print help
+  -V, --version                    Print version
 ```

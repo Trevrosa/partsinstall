@@ -28,6 +28,10 @@ struct Args {
     #[arg(env = "pinst_destination")]
     destination: PathBuf,
 
+    /// Working directory the tool will use
+    #[arg(short, long)]
+    working_dir: Option<PathBuf>,
+
     /// Do not create start menu shortcuts
     #[arg(short = 'S', long)]
     no_shortcut: bool,
@@ -87,6 +91,16 @@ fn main() {
         "Destination {:?} does not exist.",
         args.destination
     );
+
+    if let Some(working_dir) = args.working_dir {
+        assert!(
+            working_dir.exists(),
+            "Working directory {working_dir:?} does not exist."
+        );
+
+        env::set_current_dir(&working_dir).expect("Could not set working directory.");
+        println!("Using working directory: {working_dir:?}.\n");
+    }
 
     let Some(app_name) = find_app_name(&args.name) else {
         println!("Could not parse app name");
