@@ -66,10 +66,6 @@ impl PathExt for Path {
 
 /// Find the app name
 #[must_use]
-#[allow(
-    clippy::missing_panics_doc,
-    reason = "O.expect() only used within a block which O is checked to be Some."
-)]
 pub fn find_app_name(name: &Path) -> Option<Cow<'_, str>> {
     let name_str = name.lossy_file_name()?;
 
@@ -85,7 +81,7 @@ pub fn find_app_name(name: &Path) -> Option<Cow<'_, str>> {
         return Some(name_str);
     }
 
-    // we now know `name` exists and is not a dir.
+    // we now know `name` exists and is a file (not a dir).
 
     // remove numeric extension. eg. app.7z.001 would become app.7z
     let name = if name.is_numeric() {
@@ -96,7 +92,7 @@ pub fn find_app_name(name: &Path) -> Option<Cow<'_, str>> {
 
     let file_name = Path::new(name.as_ref());
 
-    // remove archive extension. eg. app.7z would become app.
+    // remove archive extension. eg. app.7z would become app
     let file_name = if file_name.is_archive() {
         file_name.lossy_file_stem()?
     } else {
