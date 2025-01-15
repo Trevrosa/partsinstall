@@ -103,10 +103,10 @@ fn main() {
     }
 
     let Some(app_name) = find_app_name(&args.name) else {
-        println!("Could not parse app name");
+        println!("Could not parse app name.");
         exit(1);
     };
-    println!("parsed name as: {app_name}");
+    println!("Parsed name as: {app_name}\n");
 
     let glob_pattern = format!("{app_name}*");
 
