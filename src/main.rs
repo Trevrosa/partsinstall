@@ -21,7 +21,7 @@ use partsinstall::{
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
-    /// Name of or path to application to install
+    /// Name of application in working directory to install
     name: PathBuf,
 
     /// Destination of install

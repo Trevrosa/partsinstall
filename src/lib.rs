@@ -26,7 +26,7 @@ macro_rules! print_flush {
 
 /// List of archive extensions supported by the tool and 7z.
 ///
-/// I chose these values based on the most commonly used archive types on Windows specifically.
+/// I chose these values based on the most commonly used archive types.
 ///
 /// <https://documentation.help/7-Zip/formats.htm>
 const ARCHIVE_EXTS: &[&str] = &["7z", "zip", "rar", "tgz"];
@@ -44,7 +44,7 @@ impl PathExt for Path {
     /// Returns true if the path's extension is in [`ARCHIVE_EXTS`]
     fn is_archive(&self) -> bool {
         self.lossy_extension()
-            .is_some_and(|ext| ARCHIVE_EXTS.contains(&ext.as_ref()))
+            .is_some_and(|ext| ARCHIVE_EXTS.contains(&ext.to_lowercase().as_ref()))
     }
 
     /// Returns true if the path's extension can be parsed as a `u32`.

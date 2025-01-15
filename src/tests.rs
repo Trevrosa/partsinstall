@@ -7,6 +7,12 @@ fn test_archive_ext() {
     let archive = Path::new("test.7z");
     assert!(archive.is_archive());
 
+    let cased_archive = Path::new("test.7Z");
+    assert!(cased_archive.is_archive());
+
+    let cased_archive2 = Path::new("test.zIP");
+    assert!(cased_archive2.is_archive());
+
     let multi_ext_archive = Path::new("test.app.7z");
     assert!(multi_ext_archive.is_archive());
 
