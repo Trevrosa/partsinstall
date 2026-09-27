@@ -1,18 +1,19 @@
 use std::{
     borrow::Cow,
     fs::{self, File},
-    io,
-    os::windows::fs::MetadataExt,
+    io::{self, Read},
+    os::windows::fs::FileExt,
     path::{Path, PathBuf},
     process::{exit, Command},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use glob::glob;
 use humansize::{format_size, DECIMAL};
 use partsinstall::{
-    compare_numeric_extension, name_has_keywords, print_flush, prompt, prompt_user_for_path,
-    prompt_user_for_usize, PathExt,
+    compare_numeric_extension, file_size, name_has_keywords, print_flush, prompt,
+    prompt_user_for_path, prompt_user_for_usize, PathExt,
 };
 
 /// Parse the app name from `name`.
@@ -56,15 +57,17 @@ pub fn parse_app_name(name: &Path) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(file_name.into_owned()))
 }
 
-/// Find the final output name, combining `files` if needed, returning the final name and time taken to combine (if any). 
-pub fn find_final_name<'a>(
+/// Combine `files` if needed, return the name of the output file and the time taken to combine `files`
+pub fn finalize(
     app_name: &str,
-    files: &'a mut [PathBuf],
+    mut files: Vec<PathBuf>,
     no_interaction: bool,
-) -> (Cow<'a, str>, Duration) {
+    threads: u16,
+) -> (String, Duration) {
     if files.len() == 1 {
         if no_interaction {
-            (files[0].to_string_lossy(), Duration::ZERO)
+            let first = files.swap_remove(0).to_string_lossy().into_owned();
+            (first, Duration::ZERO)
         } else {
             print_flush!("Only 1 file found, extract {:?}? (y/n): ", files[0]);
 
@@ -73,7 +76,8 @@ pub fn find_final_name<'a>(
                 exit(1)
             }
 
-            (files[0].to_string_lossy(), Duration::ZERO)
+            let first = files.swap_remove(0).to_string_lossy().into_owned();
+            (first, Duration::ZERO)
         }
     } else {
         let combine_start = Instant::now();
@@ -96,10 +100,11 @@ pub fn find_final_name<'a>(
 
         println!("Combining to {final_name}");
 
-        let combine_time = combine_files(files, &final_name, combine_start, no_interaction)
-            .unwrap_or(Duration::ZERO);
+        let combine_time =
+            combine_files(files, &final_name, combine_start, no_interaction, threads)
+                .unwrap_or(Duration::ZERO);
 
-        (Cow::Owned(final_name), combine_time)
+        (final_name, combine_time)
     }
 }
 
@@ -109,58 +114,94 @@ pub fn find_final_name<'a>(
     reason = "We want to panic/exit if something fails here."
 )]
 pub fn combine_files(
-    files: &mut [PathBuf],
+    mut files: Vec<PathBuf>,
     output_name: &str,
     start: Instant,
     no_interaction: bool,
+    threads: u16,
 ) -> Option<Duration> {
-    let final_file = File::create_new(output_name);
-
-    if let Ok(mut final_file) = final_file {
-        let files_len = files.len();
-
-        // glob sorts alphanumerically, meaning it will sort correctly until a number is larger than 10.
-        // eg. 01, 11, 02, 021, 03 will be how glob sorts numbers larger than 10.
-        if files.len() > 10 {
-            files.sort_by(|a, b| compare_numeric_extension(a, b));
-        }
-
-        for (n, file) in files.iter().enumerate() {
-            if let Ok(metadata) = fs::metadata(file) {
-                let size = format_size(metadata.file_size(), DECIMAL);
-                println!("{}/{files_len}: combining {file:?} ({size})", n + 1);
-            } else {
-                println!("{}/{files_len}: combining {file:?}", n + 1);
-            }
-
-            // do not use BufReader here since we expect large files to be combined.
-            // (benched and saw larger files took longer to combine with the use of BufReader than not.)
-            let mut file = File::open(file).expect("File could not be opened");
-            io::copy(&mut file, &mut final_file).expect("Failed to copy files");
-        }
-
-        Some(start.elapsed())
-    } else {
-        let err = final_file.expect_err("File must be Err here.");
-
-        if matches!(err.kind(), io::ErrorKind::AlreadyExists) {
+    let final_file = match File::create_new(output_name) {
+        Ok(f) => f,
+        Err(err) if matches!(err.kind(), io::ErrorKind::AlreadyExists) => {
             // skip prompt
             if no_interaction {
                 println!("File \"{output_name}\" already exists, extracting.");
-                None
-            } else {
-                print_flush!("File \"{output_name}\" already exists, extract it? (y/n): ");
-
-                if prompt().to_lowercase() != "y" {
-                    exit(1);
-                }
-
-                None
+                return None;
             }
-        } else {
-            panic!("File {output_name} was unable to be created: {err:?}")
+            print_flush!("File \"{output_name}\" already exists, extract it? (y/n): ");
+            if prompt().to_lowercase() != "y" {
+                exit(1);
+            }
+            return None;
         }
+        Err(err) => panic!("File {output_name} was unable to be created: {err:?}"),
+    };
+    let final_file = Arc::new(final_file);
+
+    let file_sizes: Vec<u64> = files.iter().map(|f| file_size(f)).collect();
+
+    // glob sorts alphanumerically, meaning it will sort correctly until a number is larger than 10.
+    // eg. 01, 11, 02, 021, 03 will be how glob sorts numbers larger than 10.
+    if files.len() > 10 {
+        files.sort_by(|a, b| compare_numeric_extension(a, b));
     }
+
+    // (path, offset)
+    let (tx, rx) = crossbeam_channel::bounded(threads as usize);
+
+    println!("combining {} files with {threads} threads", files.len());
+
+    std::thread::spawn(move || {
+        for (n, file) in files.into_iter().enumerate() {
+            let offset = if n > 0 {
+                file_sizes.iter().take(n).sum()
+            } else {
+                0
+            };
+            tx.send((file, offset)).expect("channel cannot be closed");
+        }
+        drop(tx);
+    });
+
+    let mut thread_handles = Vec::with_capacity(threads as usize);
+    for i in 0..threads {
+        let rx = rx.clone();
+        let final_file = final_file.clone();
+        thread_handles.push(std::thread::spawn(move || {
+            let Ok((path, offset)) = rx.recv() else {
+                return;
+            };
+            println!("[thread{i}] combining {path:?} at offset {offset}");
+            let mut file = io::BufReader::new(File::open(&path).unwrap());
+            let mut total_written = 0;
+            loop {
+                let mut buf = [0; 8192];
+                let len = file.read(&mut buf).unwrap();
+                if len == 0 {
+                    println!("[thread{i}] done with {path:?}");
+                    break;
+                }
+                let mut written = final_file
+                    .seek_write(&buf[0..len], offset + total_written)
+                    .unwrap();
+                while written != len {
+                    written = final_file
+                        .seek_write(&buf[written..len], offset + total_written + written as u64)
+                        .unwrap();
+                }
+                total_written += len as u64;
+            }
+            println!("copied {total_written} bytes from {path:?}");
+        }));
+    }
+
+    for handle in thread_handles {
+        handle.join().unwrap();
+    }
+
+    println!("finished");
+
+    Some(start.elapsed())
 }
 
 /// Create destination path, handling errors and giving prompts as needed.
@@ -269,8 +310,8 @@ pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
 ///
 /// We want to fail silently, so this function returns `()`.
 pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool) {
-    let executables =
-        glob(&destination.join("*exe").to_string_lossy()).expect("Invalid glob pattern used");
+    let executables = glob(&destination.join("*.{exe,bat}").to_string_lossy())
+        .expect("Invalid glob pattern used");
     let executables: Vec<PathBuf> = executables.filter_map(Result::ok).collect();
 
     let executable: PathBuf = if executables.is_empty() {
@@ -293,7 +334,7 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
     {
         // assume yes
         if no_interaction {
-            println!("Found executable {:?}", &found_executable);
+            println!("Found executable {found_executable:?}");
             dunce::canonicalize(found_executable.clone()).expect("Executable path should exist.")
         } else {
             print_flush!(
@@ -311,7 +352,7 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
 
                 println!("\nExecutables found:");
                 for (n, executable) in executables.iter().enumerate() {
-                    println!("{}: {executable:?}", n + 1);
+                    println!("{}: {}", n + 1, executable.display());
                 }
 
                 let choice: usize = prompt_user_for_usize(executables.len());
@@ -341,7 +382,7 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
         r"$shortcut = (New-Object -COMObject WScript.Shell).CreateShortcut({shortcut:?});
             $shortcut.TargetPath = {executable:?};
             $shortcut.WorkingDirectory = {shortcut_dir:?};
-            $shortcut.Save()",
+            $shortcut.Save()"
     );
 
     let powershell = Command::new("powershell")

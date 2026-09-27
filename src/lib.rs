@@ -29,6 +29,30 @@ macro_rules! print_flush {
 /// <https://documentation.help/7-Zip/formats.htm>
 const ARCHIVE_EXTS: &[&str] = &["7z", "zip", "rar", "tgz"];
 
+#[must_use]
+pub fn cpu_cores() -> u16 {
+    std::thread::available_parallelism()
+        .unwrap()
+        .get()
+        .try_into()
+        .unwrap()
+}
+
+#[cfg(windows)]
+#[must_use]
+pub fn file_size(p: &Path) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+
+    p.metadata().map(|m| m.file_size()).unwrap()
+}
+
+#[cfg(unix)]
+pub fn file_size(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+
+    p.metadata().map(|m| m.size()).unwrap()
+}
+
 /// Provide convenience extension methods for [`Path`]
 pub trait PathExt {
     fn is_archive(&self) -> bool;

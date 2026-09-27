@@ -12,8 +12,8 @@ use std::{
 
 use clap::Parser;
 use glob::{glob, Paths};
-use partsinstall::print_flush;
-use steps::{create_destination, create_shortcut, find_final_name, flatten_dir, parse_app_name};
+use partsinstall::{cpu_cores, print_flush};
+use steps::{create_destination, create_shortcut, finalize, flatten_dir, parse_app_name};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -28,6 +28,10 @@ struct Args {
     /// Working directory the tool will use
     #[arg(short, long)]
     working_dir: Option<PathBuf>,
+
+    /// Number of threads to use to combine files
+    #[arg(short = 'T', long)]
+    threads: Option<u16>,
 
     /// Do not create start menu shortcuts
     #[arg(short = 'S', long)]
@@ -44,20 +48,8 @@ struct Args {
 
 /// Print only the `payload` on panic.
 fn panic_hook(panic_info: &PanicHookInfo) {
-    if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-        if writeln!(stderr(), "{s}").is_err() {
-            println!("{s}");
-        }
-    } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-        if writeln!(stderr(), "{s}").is_err() {
-            println!("{s}");
-        }
-    } else {
-        let s = "Panic occurred";
-        if writeln!(stderr(), "{s}").is_err() {
-            println!("{s}");
-        }
-    }
+    let s = panic_info.payload_as_str().unwrap_or("Panic occurred");
+    let _ = writeln!(stderr(), "{s}");
 }
 
 /// Print summary and exit with exit code 0
@@ -117,14 +109,16 @@ fn main() {
         glob(&glob_pattern).expect("Glob pattern was not valid")
     };
 
-    let mut files: Vec<PathBuf> = files.filter_map(Result::ok).collect();
+    let files: Vec<PathBuf> = files.filter_map(Result::ok).collect();
 
     if files.is_empty() {
         println!("No files were found starting with the name {app_name}");
         exit(1);
     }
 
-    let (final_name, combine_time) = find_final_name(&app_name, &mut files, args.no_interaction);
+    let threads = args.threads.unwrap_or_else(cpu_cores);
+
+    let (final_name, combine_time) = finalize(&app_name, files, args.no_interaction, threads);
 
     let destination = args.destination.join(app_name.as_ref());
     println!("\nExtracting {app_name} to {destination:?}");
@@ -175,7 +169,7 @@ fn main() {
         println!("Not creating start menu shortcut.");
     } else if env::consts::OS == "windows" {
         println!("Creating start menu shortcut:");
-        
+
         create_shortcut(&app_name, &destination, args.no_interaction);
         success(combine_time, extract_time, flatten_time, start);
     } else {
