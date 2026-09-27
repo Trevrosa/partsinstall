@@ -1,6 +1,6 @@
 [package]
 name = "partsinstall"
-version = "0.1.14"
+version = "0.2.0"
 description = "Install apps packaged in compressed parts"
 edition = "2021"
 license = "MIT"
