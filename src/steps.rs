@@ -1,7 +1,9 @@
+#![allow(missing_docs)]
+
 use std::{
     borrow::Cow,
     fs::{self, File},
-    io::{self, Read},
+    io::{self, BufRead, ErrorKind::Interrupted},
     os::windows::fs::FileExt,
     path::{Path, PathBuf},
     process::{exit, Command},
@@ -12,8 +14,8 @@ use std::{
 use glob::glob;
 use humansize::{format_size, DECIMAL};
 use partsinstall::{
-    compare_numeric_extension, file_size, name_has_keywords, print_flush, prompt,
-    prompt_user_for_path, prompt_user_for_usize, PathExt,
+    compare_numeric_extensions, file_size, get_input, name_has_keywords, print_flush,
+    prompt_for_path, prompt_for_usize, PathExt,
 };
 
 /// Parse the app name from `name`.
@@ -72,7 +74,7 @@ pub fn finalize(
             print_flush!("Only 1 file found, extract {:?}? (y/n): ", files[0]);
 
             // true
-            if prompt().to_lowercase() != "y" {
+            if get_input().to_lowercase() != "y" {
                 exit(1)
             }
 
@@ -109,16 +111,12 @@ pub fn finalize(
 }
 
 /// Combine `files` into one file named `final_name`, prompting user and exiting if needed.
-#[allow(
-    clippy::missing_panics_doc,
-    reason = "We want to panic/exit if something fails here."
-)]
 pub fn combine_files(
     mut files: Vec<PathBuf>,
     output_name: &str,
     start: Instant,
     no_interaction: bool,
-    threads: u16,
+    max_threads: u16,
 ) -> Option<Duration> {
     let final_file = match File::create_new(output_name) {
         Ok(f) => f,
@@ -129,7 +127,7 @@ pub fn combine_files(
                 return None;
             }
             print_flush!("File \"{output_name}\" already exists, extract it? (y/n): ");
-            if prompt().to_lowercase() != "y" {
+            if get_input().to_lowercase() != "y" {
                 exit(1);
             }
             return None;
@@ -143,13 +141,16 @@ pub fn combine_files(
     // glob sorts alphanumerically, meaning it will sort correctly until a number is larger than 10.
     // eg. 01, 11, 02, 021, 03 will be how glob sorts numbers larger than 10.
     if files.len() > 10 {
-        files.sort_by(|a, b| compare_numeric_extension(a, b));
+        files.sort_by(|a, b| compare_numeric_extensions(a, b));
     }
 
     // (path, offset)
-    let (tx, rx) = crossbeam_channel::bounded(threads as usize);
+    let (tx, rx) = crossbeam_channel::bounded(max_threads as usize);
 
-    println!("combining {} files with {threads} threads", files.len());
+    let files_len = files.len();
+    let threads =
+        max_threads.min(u16::try_from(files_len).expect("should not be that many chunks"));
+    println!("combining {files_len} files with {max_threads} ({threads}) threads");
 
     std::thread::spawn(move || {
         for (n, file) in files.into_iter().enumerate() {
@@ -168,30 +169,39 @@ pub fn combine_files(
         let rx = rx.clone();
         let final_file = final_file.clone();
         thread_handles.push(std::thread::spawn(move || {
-            let Ok((path, offset)) = rx.recv() else {
+            let Ok((path, initial_offset)) = rx.recv() else {
                 return;
             };
-            println!("[thread{i}] combining {path:?} at offset {offset}");
+            println!("[thread{i}] combining {path:?} at offset {initial_offset}");
+
+            let mut offset = initial_offset;
             let mut file = io::BufReader::new(File::open(&path).unwrap());
-            let mut total_written = 0;
             loop {
-                let mut buf = [0; 8192];
-                let len = file.read(&mut buf).unwrap();
+                let mut buf = file.fill_buf().unwrap();
+                let len = buf.len();
                 if len == 0 {
                     println!("[thread{i}] done with {path:?}");
                     break;
                 }
-                let mut written = final_file
-                    .seek_write(&buf[0..len], offset + total_written)
-                    .unwrap();
-                while written != len {
-                    written = final_file
-                        .seek_write(&buf[written..len], offset + total_written + written as u64)
-                        .unwrap();
+                while !buf.is_empty() {
+                    match final_file.seek_write(buf, offset) {
+                        Ok(0) => panic!("failed to write whole buffer"),
+                        Ok(n) => {
+                            buf = &buf[n..];
+                            offset += n as u64;
+                        }
+                        Err(ref e) if matches!(e.kind(), Interrupted) => {}
+                        Err(e) => panic!("failed to write: {e}"),
+                    }
                 }
-                total_written += len as u64;
+                file.consume(len);
             }
-            println!("copied {total_written} bytes from {path:?}");
+
+            let total_written = offset - initial_offset;
+            println!(
+                "copied {} from {path:?}",
+                format_size(total_written, DECIMAL)
+            );
         }));
     }
 
@@ -229,7 +239,7 @@ pub fn create_destination(destination: &Path, no_interaction: bool) {
                     "Destination folder already exists and is not empty. Continue anyway? (y/n): "
                 );
 
-                if prompt().to_lowercase() != "y" {
+                if get_input().to_lowercase() != "y" {
                     exit(1)
                 }
             }
@@ -240,10 +250,6 @@ pub fn create_destination(destination: &Path, no_interaction: bool) {
 
 /// Move all contents of a directory called `name` in `dir` to `dir`.
 /// eg. `App/App/files -> App/files`
-#[allow(
-    clippy::missing_panics_doc,
-    reason = "The expect_err() used will never panic since it is in a let Ok() else block."
-)]
 pub fn flatten_dir(name: impl AsRef<str>, dir: &Path) {
     let Ok(dir_entries) = dir.read_dir() else {
         println!("Directory was not readable, not flattening.");
@@ -323,8 +329,8 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
 
         print_flush!("No installed executables could be found. (s)kip creating shortcut or (g)ive path manually? ");
 
-        if prompt().to_lowercase() == "g" {
-            prompt_user_for_path(destination)
+        if get_input().to_lowercase() == "g" {
+            prompt_for_path(destination)
         } else {
             return;
         }
@@ -342,7 +348,7 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
                 &found_executable
             );
 
-            if prompt().to_lowercase() == "y" {
+            if get_input().to_lowercase() == "y" {
                 found_executable.clone()
             } else {
                 if executables.len() == 1 {
@@ -352,10 +358,10 @@ pub fn create_shortcut(app_name: &str, destination: &Path, no_interaction: bool)
 
                 println!("\nExecutables found:");
                 for (n, executable) in executables.iter().enumerate() {
-                    println!("{}: {}", n + 1, executable.display());
+                    println!("{}: {executable:?}", n + 1);
                 }
 
-                let choice: usize = prompt_user_for_usize(executables.len());
+                let choice: usize = prompt_for_usize(executables.len());
                 let choice = executables
                     .get(choice - 1)
                     .expect("should be less than # of executables");

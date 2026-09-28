@@ -15,6 +15,7 @@ use glob::{glob, Paths};
 use partsinstall::{cpu_cores, print_flush};
 use steps::{create_destination, create_shortcut, finalize, flatten_dir, parse_app_name};
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
@@ -32,6 +33,10 @@ struct Args {
     /// Number of threads to use to combine files
     #[arg(short = 'T', long)]
     threads: Option<u16>,
+
+    /// Only combine files, do not install
+    #[arg(short, long)]
+    dry_run: bool,
 
     /// Do not create start menu shortcuts
     #[arg(short = 'S', long)]
@@ -60,8 +65,8 @@ fn success(
     start: Instant,
 ) -> ! {
     println!(
-        "\nDone! (combining took {combine_time:?}, extracting took {extract_time:?}, flattening took {flatten_time:?}, total: {:?})",
-        start.elapsed()
+        "\nDone! (combining took {combine_time:?}, extracting took {extract_time:?}, flattening took {flatten_time:?}, sum: {:?}, total: {:?})",
+        combine_time + extract_time + flatten_time, start.elapsed()
     );
 
     exit(0)
@@ -119,6 +124,12 @@ fn main() {
     let threads = args.threads.unwrap_or_else(cpu_cores);
 
     let (final_name, combine_time) = finalize(&app_name, files, args.no_interaction, threads);
+
+    if args.dry_run {
+        println!("skipping install (--dry-run was set)");
+        println!("\nDone! (combining took {combine_time:?})");
+        exit(0);
+    }
 
     let destination = args.destination.join(app_name.as_ref());
     println!("\nExtracting {app_name} to {destination:?}");

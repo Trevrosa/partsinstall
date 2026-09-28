@@ -4,6 +4,7 @@ mod tests;
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    fmt::Display,
     io::stdin,
     path::{Path, PathBuf},
 };
@@ -98,8 +99,17 @@ pub fn name_has_keywords<'a>(keywords: impl IntoIterator<Item = &'a str>, path: 
     };
 
     let name = name.to_string_lossy();
-
     keywords.into_iter().any(|kw| name.contains(kw))
+}
+
+#[inline]
+fn get_numeric_extension(p: &Path) -> u32 {
+    p.extension()
+        .expect("One or more paths did not have a valid extension.")
+        .to_string_lossy()
+        .split('.')
+        .find_map(|ext| ext.parse().ok())
+        .expect("One or more paths did not contain a numeric extension.")
 }
 
 /// Compares numeric extensions of 2 paths (file.7z.001 < file.7z.002)
@@ -109,67 +119,57 @@ pub fn name_has_keywords<'a>(keywords: impl IntoIterator<Item = &'a str>, path: 
 /// Will panic if `a` or `b` do not have valid extensions,
 /// do not contain valid unicode, or do not contain a numeric extension
 #[must_use]
-pub fn compare_numeric_extension(a: &Path, b: &Path) -> Ordering {
-    let a: u32 = a
-        .extension()
-        .expect("One or more paths did not have a valid extension.")
-        .to_string_lossy()
-        .split('.')
-        .find_map(|ext| ext.parse().ok())
-        .expect("One or more paths did not contain a numeric extension.");
-    let b: u32 = b
-        .extension()
-        .expect("One or more paths did not have a valid extension.")
-        .to_string_lossy()
-        .split('.')
-        .find_map(|ext| ext.parse().ok())
-        .expect("One or more paths did not contain a numeric extension.");
-
+pub fn compare_numeric_extensions(a: &Path, b: &Path) -> Ordering {
+    let a: u32 = get_numeric_extension(a);
+    let b: u32 = get_numeric_extension(b);
     a.cmp(&b)
 }
 
-/// Prompt user for a usize lower than `max`, retrying infinitely.
-#[must_use]
-pub fn prompt_user_for_usize(max: usize) -> usize {
-    print_flush!("Choice: ");
+pub fn get_input() -> String {
+    let mut resp = String::new();
+    stdin().read_line(&mut resp).unwrap();
+    resp.trim().to_string()
+}
 
-    let result: Result<usize, _> = prompt().parse();
+/// Infinitely prompt the user for some data `T`, parsing from a string response with `parse`, checking if it satisfies `condition`.
+pub fn prompt<T, E, M: Display>(
+    initial: M,
+    parse: impl Fn(&str) -> Result<T, E>,
+    condition: impl Fn(&T) -> bool,
+) -> T {
+    print_flush!("{initial}");
 
-    let Ok(result) = result else {
-        return prompt_user_for_usize(max);
-    };
+    let mut response = String::new();
+    stdin().read_line(&mut response).unwrap();
 
-    if result > max {
-        return prompt_user_for_usize(max);
+    match parse(response.trim()) {
+        Ok(parsed) if condition(&parsed) => parsed,
+        _ => return prompt(initial, parse, condition),
     }
-
-    result
 }
 
-/// Prompt user for a path, retrying infinitely.
-#[must_use]
-pub fn prompt_user_for_path(start: &Path) -> PathBuf {
-    print_flush!("Path: {}\\", start.to_string_lossy());
-
-    let path = start.join(PathBuf::from(prompt()));
-
-    let Ok(path) = dunce::canonicalize(path) else {
-        return prompt_user_for_path(start);
-    };
-
-    path
+pub fn prompt_for_usize(max: usize) -> usize {
+    prompt("Choice: ", str::parse, |n| *n > max)
 }
 
-/// Read a line from `stdin` and remove leading and trailling whitespace.
-///
-/// # Panics
-///
-/// Will panic if `stdin().read_line` fails.
-#[must_use]
-pub fn prompt() -> String {
-    let mut result = String::new();
-    stdin()
-        .read_line(&mut result)
-        .expect("Failed to read stdin");
-    result.trim().to_string()
+pub fn prompt_for_path(parent: &Path) -> PathBuf {
+    prompt(
+        format_args!("Path: {}", parent.display()),
+        |s| dunce::canonicalize(parent.join(s)),
+        |_| true,
+    )
 }
+
+// /// Prompt user for a path, retrying infinitely.
+// #[must_use]
+// pub fn prompt_user_for_path(start: &Path) -> PathBuf {
+//     print_flush!("Path: {}\\", start.to_string_lossy());
+
+//     let path = start.join(PathBuf::from(prompt()));
+
+//     let Ok(path) = dunce::canonicalize(path) else {
+//         return prompt_user_for_path(start);
+//     };
+
+//     path
+// }
