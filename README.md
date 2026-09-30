@@ -13,6 +13,8 @@ Supported archive types:
 
 \<DESTINATION\> argument can be set from environment variable: `pinst_destination`
 
+see also [combinefiles](https://github.com/Trevrosa/combinefiles]
+
 ## Usage
 
 ```sh
