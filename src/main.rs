@@ -12,7 +12,7 @@ use std::{
 
 use clap::Parser;
 use glob::{glob, Paths};
-use partsinstall::{cpu_cores, print_flush};
+use partsinstall::{cpu_cores, print_flush, tracing::SimpleSubscriber};
 use steps::{create_destination, create_shortcut, finalize, flatten_dir, parse_app_name};
 
 #[allow(clippy::struct_excessive_bools)]
@@ -78,6 +78,7 @@ fn main() {
     let args = Args::parse();
 
     panic::set_hook(Box::new(panic_hook));
+    tracing::subscriber::set_global_default(SimpleSubscriber).unwrap();
 
     assert!(
         args.destination.exists(),
@@ -123,7 +124,8 @@ fn main() {
 
     let threads = args.threads.unwrap_or_else(cpu_cores);
 
-    let (final_name, combine_time) = finalize(&app_name, files, args.no_interaction, threads);
+    let (final_name, combine_time) =
+        finalize(&app_name, files, args.dry_run, args.no_interaction, threads);
 
     if args.dry_run {
         println!("skipping install (--dry-run was set)");

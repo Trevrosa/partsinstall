@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+pub mod tracing;
+
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -37,21 +39,6 @@ pub fn cpu_cores() -> u16 {
         .get()
         .try_into()
         .unwrap()
-}
-
-#[cfg(windows)]
-#[must_use]
-pub fn file_size(p: &Path) -> u64 {
-    use std::os::windows::fs::MetadataExt;
-
-    p.metadata().map(|m| m.file_size()).unwrap()
-}
-
-#[cfg(unix)]
-pub fn file_size(p: &Path) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-
-    p.metadata().map(|m| m.size()).unwrap()
 }
 
 /// Provide convenience extension methods for [`Path`]

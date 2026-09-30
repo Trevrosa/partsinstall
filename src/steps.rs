@@ -2,20 +2,17 @@
 
 use std::{
     borrow::Cow,
-    fs::{self, File},
-    io::{self, BufRead, ErrorKind::Interrupted},
-    os::windows::fs::FileExt,
+    fs, io,
     path::{Path, PathBuf},
     process::{exit, Command},
-    sync::Arc,
     time::{Duration, Instant},
 };
 
+use combinefiles::{os_impl::file_size, Options};
 use glob::glob;
-use humansize::{format_size, DECIMAL};
 use partsinstall::{
-    compare_numeric_extensions, file_size, get_input, name_has_keywords, print_flush,
-    prompt_for_path, prompt_for_usize, PathExt,
+    compare_numeric_extensions, get_input, name_has_keywords, print_flush, prompt_for_path,
+    prompt_for_usize, PathExt,
 };
 
 /// Parse the app name from `name`.
@@ -63,6 +60,7 @@ pub fn parse_app_name(name: &Path) -> Option<Cow<'_, str>> {
 pub fn finalize(
     app_name: &str,
     mut files: Vec<PathBuf>,
+    dry_run: bool,
     no_interaction: bool,
     threads: u16,
 ) -> (String, Duration) {
@@ -102,41 +100,38 @@ pub fn finalize(
 
         println!("Combining to {final_name}");
 
-        let combine_time =
-            combine_files(files, &final_name, combine_start, no_interaction, threads)
-                .unwrap_or(Duration::ZERO);
+        let combine = combine_files(
+            files,
+            &final_name,
+            combine_start,
+            dry_run,
+            no_interaction,
+            threads,
+        );
+
+        let combine_time = if let Some(time) = combine {
+            time
+        } else {
+            println!("\nfile already exists!");
+            Duration::ZERO
+        };
 
         (final_name, combine_time)
     }
 }
+
+const SMALL_FILE: u64 = 500 * 1024 * 1024;
 
 /// Combine `files` into one file named `final_name`, prompting user and exiting if needed.
 pub fn combine_files(
     mut files: Vec<PathBuf>,
     output_name: &str,
     start: Instant,
+    dry_run: bool,
     no_interaction: bool,
     max_threads: u16,
 ) -> Option<Duration> {
-    let final_file = match File::create_new(output_name) {
-        Ok(f) => f,
-        Err(err) if matches!(err.kind(), io::ErrorKind::AlreadyExists) => {
-            // skip prompt
-            if no_interaction {
-                println!("File \"{output_name}\" already exists, extracting.");
-                return None;
-            }
-            print_flush!("File \"{output_name}\" already exists, extract it? (y/n): ");
-            if get_input().to_lowercase() != "y" {
-                exit(1);
-            }
-            return None;
-        }
-        Err(err) => panic!("File {output_name} was unable to be created: {err:?}"),
-    };
-    let final_file = Arc::new(final_file);
-
-    let file_sizes: Vec<u64> = files.iter().map(|f| file_size(f)).collect();
+    let sizes: Vec<u64> = files.iter().map(|f| file_size(f)).collect();
 
     // glob sorts alphanumerically, meaning it will sort correctly until a number is larger than 10.
     // eg. 01, 11, 02, 021, 03 will be how glob sorts numbers larger than 10.
@@ -144,69 +139,37 @@ pub fn combine_files(
         files.sort_by(|a, b| compare_numeric_extensions(a, b));
     }
 
-    // (path, offset)
-    let (tx, rx) = crossbeam_channel::bounded(max_threads as usize);
+    let combine = if sizes.iter().sum::<u64>() > SMALL_FILE {
+        combinefiles::threaded(
+            files,
+            sizes,
+            output_name,
+            Options::threads(max_threads as u32),
+        )
+    } else {
+        combinefiles::single(&files, &sizes, output_name)
+    };
 
-    let files_len = files.len();
-    let threads =
-        max_threads.min(u16::try_from(files_len).expect("should not be that many chunks"));
-    println!("combining {files_len} files with {max_threads} ({threads}) threads");
-
-    std::thread::spawn(move || {
-        for (n, file) in files.into_iter().enumerate() {
-            let offset = if n > 0 {
-                file_sizes.iter().take(n).sum()
-            } else {
-                0
-            };
-            tx.send((file, offset)).expect("channel cannot be closed");
-        }
-        drop(tx);
-    });
-
-    let mut thread_handles = Vec::with_capacity(threads as usize);
-    for i in 0..threads {
-        let rx = rx.clone();
-        let final_file = final_file.clone();
-        thread_handles.push(std::thread::spawn(move || {
-            let Ok((path, initial_offset)) = rx.recv() else {
-                return;
-            };
-            println!("[thread{i}] combining {path:?} at offset {initial_offset}");
-
-            let mut offset = initial_offset;
-            let mut file = io::BufReader::new(File::open(&path).unwrap());
-            loop {
-                let mut buf = file.fill_buf().unwrap();
-                let len = buf.len();
-                if len == 0 {
-                    println!("[thread{i}] done with {path:?}");
-                    break;
+    if let Err(err) = combine {
+        match err.kind() {
+            io::ErrorKind::AlreadyExists => {
+                if dry_run {
+                    return None;
                 }
-                while !buf.is_empty() {
-                    match final_file.seek_write(buf, offset) {
-                        Ok(0) => panic!("failed to write whole buffer"),
-                        Ok(n) => {
-                            buf = &buf[n..];
-                            offset += n as u64;
-                        }
-                        Err(ref e) if matches!(e.kind(), Interrupted) => {}
-                        Err(e) => panic!("failed to write: {e}"),
-                    }
+
+                // skip prompt
+                if no_interaction {
+                    println!("File \"{output_name}\" already exists, extracting.");
+                    return None;
                 }
-                file.consume(len);
+                print_flush!("File \"{output_name}\" already exists, extract it? (y/n): ");
+                if get_input().to_lowercase() != "y" {
+                    exit(1);
+                }
+                return None;
             }
-
-            let total_written = offset - initial_offset;
-            println!(
-                "copied {} from {path:?}",
-                format_size(total_written, DECIMAL)
-            );
-        }));
-    }
-
-    for handle in thread_handles {
-        handle.join().unwrap();
+            _ => panic!("File {output_name} was unable to be created: {err:?}"),
+        }
     }
 
     println!("finished");
