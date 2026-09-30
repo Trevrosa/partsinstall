@@ -30,7 +30,11 @@ struct Args {
     #[arg(short, long)]
     working_dir: Option<PathBuf>,
 
-    /// Number of threads to use to combine files
+    /// Force the use of threads to combine files
+    #[arg(short = 'F', long)]
+    force_threaded: bool,
+
+    /// Number of threads to use to combine files, if in multithreaded mode
     #[arg(short = 'T', long)]
     threads: Option<u16>,
 
@@ -124,8 +128,14 @@ fn main() {
 
     let threads = args.threads.unwrap_or_else(cpu_cores);
 
-    let (final_name, combine_time) =
-        finalize(&app_name, files, args.dry_run, args.no_interaction, threads);
+    let (final_name, combine_time) = finalize(
+        &app_name,
+        files,
+        args.dry_run,
+        args.no_interaction,
+        threads,
+        args.force_threaded,
+    );
 
     if args.dry_run {
         println!("skipping install (--dry-run was set)");

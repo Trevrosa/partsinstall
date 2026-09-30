@@ -63,6 +63,7 @@ pub fn finalize(
     dry_run: bool,
     no_interaction: bool,
     threads: u16,
+    force_threaded: bool,
 ) -> (String, Duration) {
     if files.len() == 1 {
         if no_interaction {
@@ -107,6 +108,7 @@ pub fn finalize(
             dry_run,
             no_interaction,
             threads,
+            force_threaded,
         );
 
         let combine_time = if let Some(time) = combine {
@@ -130,6 +132,7 @@ pub fn combine_files(
     dry_run: bool,
     no_interaction: bool,
     max_threads: u16,
+    force_threaded: bool,
 ) -> Option<Duration> {
     let sizes: Vec<u64> = files.iter().map(|f| file_size(f)).collect();
 
@@ -139,7 +142,7 @@ pub fn combine_files(
         files.sort_by(|a, b| compare_numeric_extensions(a, b));
     }
 
-    let combine = if sizes.iter().sum::<u64>() > SMALL_FILE {
+    let combine = if force_threaded || sizes.iter().sum::<u64>() > SMALL_FILE {
         combinefiles::threaded(
             files,
             sizes,
